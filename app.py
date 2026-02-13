@@ -2,6 +2,7 @@
 # APPLICATION FLASK - CHAT APP AVEC IA
 # Déploiement sur Vercel
 # GEMINI - DÉTECTION AUTOMATIQUE DES MODÈLES
+# MÉMOIRE 24H INTÉGRÉE
 # ============================================
 
 from flask import Flask, render_template, request, jsonify, session
@@ -12,6 +13,8 @@ import random
 import time
 from functools import wraps
 import google.generativeai as genai
+from datetime import datetime, timedelta
+import hashlib
 
 # ============================================
 # CONFIGURATION - VARIABLES D'ENVIRONNEMENT
@@ -24,6 +27,15 @@ SECRET_KEY = os.environ.get('SECRET_KEY')
 if not SECRET_KEY:
     raise ValueError("❌ ERREUR CRITIQUE: SECRET_KEY non définie dans Vercel!")
 app.secret_key = SECRET_KEY
+
+# Configuration de la session pour 24h
+app.config['SECRET_KEY'] = SECRET_KEY
+app.config['PERMANENT_SESSION_LIFETIME'] = timedelta(hours=24)  # ⏰ 24 HEURES !
+app.config['SESSION_TYPE'] = 'filesystem'
+app.config['SESSION_COOKIE_NAME'] = 'benbot_session'
+app.config['SESSION_COOKIE_HTTPONLY'] = True
+app.config['SESSION_COOKIE_SECURE'] = False  # Mettre True en HTTPS
+app.config['SESSION_COOKIE_SAMESITE'] = 'Lax'
 
 # 🔥 API GEMINI - Utilise OPENAI_API_KEY ou GEMINI_API_KEY
 GEMINI_API_KEY = os.environ.get('OPENAI_API_KEY') or os.environ.get('GEMINI_API_KEY')
@@ -47,12 +59,13 @@ DEBUG_MODE = os.environ.get('FLASK_ENV', 'production') == 'development'
 # ============================================
 
 print("\n" + "="*50)
-print("🚀 APPLICATION DÉMARRÉE SUR VERCEL")
+print("🚀 APPLICATION DÉMARRÉE SUR VERCEL AVEC MÉMOIRE 24H")
 print("="*50)
 print(f"✅ SECRET_KEY: {'Configurée' if SECRET_KEY else 'MANQUANTE'}")
 print(f"✅ GEMINI_API_KEY: {'Configurée' if GEMINI_API_KEY else 'MANQUANTE'}")
 print(f"✅ ADSENSE_CLIENT_ID: {'Configuré' if ADSENSE_CLIENT_ID != 'ca-pub-XXXXXXXXXXXXXXXX' else 'Défaut'}")
 print(f"✅ Mode: {'Développement' if DEBUG_MODE else 'Production'}")
+print(f"✅ Mémoire: 24 heures active")
 print("="*50 + "\n")
 
 # ============================================
@@ -80,7 +93,7 @@ def handle_errors(f):
     return decorated_function
 
 # ============================================
-# SERVICE VPN CORRIGÉ
+# SERVICE VPN
 # ============================================
 
 class VPNService:
@@ -211,6 +224,160 @@ class VPNService:
             }
 
 # ============================================
+# SERVICE DE MÉMOIRE 24H
+# ============================================
+
+@app.before_request
+def make_session_permanent():
+    """Active la session permanente pour 24h"""
+    session.permanent = True
+    if 'last_activity' not in session:
+        session['last_activity'] = time.time()
+
+class MemoryService24h:
+    """Service de mémoire avec expiration 24h"""
+    
+    @staticmethod
+    def init_conversation():
+        """Initialise une nouvelle conversation"""
+        if 'conversation' not in session:
+            session['conversation'] = {
+                'id': hashlib.md5(str(time.time()).encode()).hexdigest()[:8],
+                'created_at': time.time(),
+                'expires_at': time.time() + 86400,  # 24h en secondes
+                'messages': [],
+                'user_info': {},
+                'topics': [],
+                'message_count': 0
+            }
+            session.modified = True
+        return session['conversation']
+    
+    @staticmethod
+    def is_expired():
+        """Vérifie si la session a expiré (24h)"""
+        if 'conversation' not in session:
+            return True
+        
+        expires_at = session['conversation'].get('expires_at', 0)
+        if time.time() > expires_at:
+            session.pop('conversation', None)
+            session.modified = True
+            return True
+        return False
+    
+    @staticmethod
+    def add_message(role, content):
+        """Ajoute un message à la conversation"""
+        MemoryService24h.init_conversation()
+        
+        if MemoryService24h.is_expired():
+            MemoryService24h.init_conversation()
+        
+        session['conversation']['messages'].append({
+            'id': len(session['conversation']['messages']),
+            'role': role,
+            'content': content,
+            'timestamp': time.time(),
+            'time_str': datetime.now().strftime('%H:%M'),
+            'date_str': datetime.now().strftime('%d/%m/%Y')
+        })
+        
+        session['conversation']['message_count'] += 1
+        
+        # Garder seulement les 50 derniers messages
+        if len(session['conversation']['messages']) > 50:
+            session['conversation']['messages'] = session['conversation']['messages'][-50:]
+        
+        session.modified = True
+        return session['conversation']
+    
+    @staticmethod
+    def get_context(limit=10):
+        """Récupère le contexte de conversation"""
+        if MemoryService24h.is_expired():
+            return []
+        
+        conversation = session.get('conversation', {})
+        messages = conversation.get('messages', [])
+        return messages[-limit:]
+    
+    @staticmethod
+    def get_conversation_summary():
+        """Résumé de la conversation"""
+        if MemoryService24h.is_expired():
+            return None
+        
+        conv = session.get('conversation', {})
+        messages = conv.get('messages', [])
+        
+        if messages and len(messages) > 0:
+            start_time = messages[0].get('timestamp', time.time())
+            duration = time.time() - start_time
+            hours = int(duration // 3600)
+            minutes = int((duration % 3600) // 60)
+        else:
+            hours, minutes = 0, 0
+        
+        return {
+            'id': conv.get('id'),
+            'message_count': len(messages),
+            'duration': f"{hours}h{minutes}min",
+            'created_at': datetime.fromtimestamp(conv.get('created_at', time.time())).strftime('%H:%M %d/%m/%Y'),
+            'expires_at': datetime.fromtimestamp(conv.get('expires_at', time.time())).strftime('%H:%M %d/%m/%Y'),
+            'time_remaining': int(conv.get('expires_at', 0) - time.time())
+        }
+    
+    @staticmethod
+    def remember_info(key, value):
+        """Mémorise une information utilisateur"""
+        if MemoryService24h.is_expired():
+            MemoryService24h.init_conversation()
+        
+        if 'user_info' not in session['conversation']:
+            session['conversation']['user_info'] = {}
+        
+        session['conversation']['user_info'][key] = {
+            'value': value,
+            'timestamp': time.time()
+        }
+        session.modified = True
+    
+    @staticmethod
+    def get_user_info(key=None):
+        """Récupère les informations utilisateur"""
+        if MemoryService24h.is_expired():
+            return None
+        
+        user_info = session.get('conversation', {}).get('user_info', {})
+        if key:
+            info = user_info.get(key, {})
+            return info.get('value') if info else None
+        return {k: v['value'] for k, v in user_info.items()}
+    
+    @staticmethod
+    def add_topic(topic):
+        """Ajoute un sujet de discussion"""
+        if MemoryService24h.is_expired():
+            MemoryService24h.init_conversation()
+        
+        if 'topics' not in session['conversation']:
+            session['conversation']['topics'] = []
+        
+        if topic not in session['conversation']['topics']:
+            session['conversation']['topics'].append(topic)
+            if len(session['conversation']['topics']) > 10:
+                session['conversation']['topics'] = session['conversation']['topics'][-10:]
+        
+        session.modified = True
+    
+    @staticmethod
+    def clear():
+        """Efface la conversation"""
+        session.pop('conversation', None)
+        session.modified = True
+
+# ============================================
 # SERVICE GEMINI - DÉTECTION AUTOMATIQUE
 # ============================================
 
@@ -277,81 +444,17 @@ class GeminiService:
             'gemini-pro'
         ]
         
-        # Chercher d'abord les modèles préférés
         for preferred in preferred_names:
             for model in models:
                 if model['name'] == preferred:
                     print(f"✅ Modèle sélectionné: {preferred}")
                     return preferred
         
-        # Sinon prendre le premier modèle disponible
         if models:
             print(f"⚠️ Modèle par défaut: {models[0]['name']}")
             return models[0]['name']
         
         return None
-    
-    @classmethod
-    def generate_response(cls, user_message, max_tokens=500, temperature=0.7):
-        """Génère une réponse avec le meilleur modèle disponible"""
-        
-        if not GEMINI_API_KEY:
-            return {
-                'success': False,
-                'error': 'Clé API manquante',
-                'response': "Service IA non configuré."
-            }
-        
-        try:
-            genai.configure(api_key=GEMINI_API_KEY)
-            model_name = cls.get_best_model()
-            
-            if not model_name:
-                return {
-                    'success': False,
-                    'error': 'Aucun modèle disponible',
-                    'response': "Aucun modèle IA disponible."
-                }
-            
-            model = genai.GenerativeModel(model_name)
-            
-            # Prompt optimisé pour BenBot
-            prompt = f"""Tu es BenBot, un assistant IA amical et serviable.
-            Réponds en français de manière concise, claire et utile.
-            Message de l'utilisateur: {user_message}
-            Réponse de BenBot:"""
-            
-            response = model.generate_content(
-                prompt,
-                generation_config={
-                    "temperature": temperature,
-                    "max_output_tokens": max_tokens,
-                    "top_p": 0.9,
-                    "top_k": 40
-                }
-            )
-            
-            if response and response.text:
-                return {
-                    'success': True,
-                    'response': response.text,
-                    'model': model_name,
-                    'tokens_used': len(response.text) // 4
-                }
-            else:
-                return {
-                    'success': False,
-                    'error': 'Réponse vide',
-                    'response': "Désolé, je n'ai pas pu générer une réponse."
-                }
-                
-        except Exception as e:
-            print(f"❌ Erreur Gemini: {str(e)}")
-            return {
-                'success': False,
-                'error': str(e),
-                'response': f"BenBot: Bonjour ! Je suis en ligne. Votre message a bien été reçu."
-            }
 
 # ============================================
 # ROUTES PRINCIPALES
@@ -370,16 +473,17 @@ def health():
     """Health check"""
     return jsonify({
         'status': 'healthy',
+        'memory': '24h active',
         'timestamp': time.time()
     })
 
 # ============================================
-# ROUTES GEMINI - OPTION 2 (DÉTECTION AUTOMATIQUE)
+# ROUTE CHAT AVEC MÉMOIRE 24H
 # ============================================
 
 @app.route('/api/chat', methods=['POST'])
 def chat():
-    """API Gemini avec détection automatique des modèles"""
+    """API Gemini avec mémoire 24h et détection automatique"""
     
     data = request.json
     if not data:
@@ -389,24 +493,218 @@ def chat():
     if not user_message:
         return jsonify({'error': 'Message vide'}), 400
     
+    # 🔥 INITIALISER LA MÉMOIRE 24H
+    MemoryService24h.init_conversation()
+    
+    if MemoryService24h.is_expired():
+        MemoryService24h.init_conversation()
+    
+    # 🔥 AJOUTER LE MESSAGE UTILISATEUR
+    MemoryService24h.add_message('user', user_message)
+    
+    # 🔥 DÉTECTION DU PRÉNOM
+    if "je m'appelle" in user_message.lower() or "mon nom est" in user_message.lower() or "moi c'est" in user_message.lower():
+        words = user_message.lower().split()
+        for i, word in enumerate(words):
+            if word in ["m'appelle", "nom", "c'est"] and i + 1 < len(words):
+                name = words[i + 1].capitalize()
+                MemoryService24h.remember_info('prenom', name)
+                break
+    
+    # 🔥 DÉTECTION DES SUJETS
+    topics_keywords = {
+        'travail': ['travail', 'emploi', 'job', 'carrière', 'métier', 'profession'],
+        'etude': ['étude', 'école', 'cours', 'apprendre', 'formation', 'université'],
+        'technologie': ['ordinateur', 'programmation', 'code', 'python', 'logiciel', 'site web'],
+        'sante': ['santé', 'médecin', 'malade', 'douleur', 'bien-être'],
+        'voyage': ['voyage', 'vacances', 'pays', 'visiter', 'avion', 'hôtel']
+    }
+    
+    for topic, keywords in topics_keywords.items():
+        if any(keyword in user_message.lower() for keyword in keywords):
+            MemoryService24h.add_topic(topic)
+    
     # Paramètres optionnels
     max_tokens = min(int(data.get('max_tokens', 500)), 1000)
     temperature = float(data.get('temperature', 0.7))
     
-    # Générer la réponse avec Gemini
-    result = GeminiService.generate_response(
-        user_message,
-        max_tokens=max_tokens,
-        temperature=temperature
-    )
+    try:
+        # 🔥 CONSTRUIRE LE CONTEXTE AVEC MÉMOIRE
+        context_messages = MemoryService24h.get_context(8)
+        user_info = MemoryService24h.get_user_info()
+        topics = session.get('conversation', {}).get('topics', [])
+        summary = MemoryService24h.get_conversation_summary()
+        
+        # Construire le prompt avec mémoire
+        memory_context = ""
+        
+        if user_info and 'prenom' in user_info:
+            memory_context += f"L'utilisateur s'appelle {user_info['prenom']}. "
+        
+        if topics:
+            memory_context += f"Sujets discutés récemment: {', '.join(topics[-3:])}. "
+        
+        if summary and summary['time_remaining'] > 0:
+            hours_left = summary['time_remaining'] // 3600
+            if hours_left > 0:
+                memory_context += f"Conversation active depuis {summary['duration']}. "
+        
+        conversation_history = ""
+        for msg in context_messages:
+            role = "Utilisateur" if msg['role'] == 'user' else "BenBot"
+            conversation_history += f"{role}: {msg['content']}\n"
+        
+        # Prompt final
+        prompt = f"""Tu es BenBot, un assistant IA amical et serviable.
+Réponds en français de manière naturelle, chaleureuse et utile.
+
+{memory_context}
+Historique de la conversation:
+{conversation_history}
+BenBot:"""
+        
+        # Générer la réponse avec Gemini
+        genai.configure(api_key=GEMINI_API_KEY)
+        model_name = GeminiService.get_best_model()
+        
+        if not model_name:
+            return jsonify({
+                'success': True,
+                'response': f"BenBot: {user_message}",
+                'model': 'memory-only'
+            }), 200
+        
+        model = genai.GenerativeModel(model_name)
+        response = model.generate_content(
+            prompt,
+            generation_config={
+                "temperature": temperature,
+                "max_output_tokens": max_tokens,
+                "top_p": 0.9,
+                "top_k": 40
+            }
+        )
+        
+        if response and response.text:
+            ai_response = response.text
+            
+            # 🔥 AJOUTER LA RÉPONSE À LA MÉMOIRE
+            MemoryService24h.add_message('assistant', ai_response)
+            
+            return jsonify({
+                'success': True,
+                'response': ai_response,
+                'model': model_name,
+                'memory': {
+                    'active': True,
+                    'expires_in': '24h',
+                    'time_remaining': summary['time_remaining'] if summary else 86400,
+                    'message_count': session.get('conversation', {}).get('message_count', 0),
+                    'user_name': user_info.get('prenom') if user_info else None
+                },
+                'timestamp': time.time()
+            })
+        else:
+            MemoryService24h.add_message('assistant', f"BenBot: J'ai bien reçu ton message !")
+            return jsonify({
+                'success': True,
+                'response': f"BenBot: J'ai bien reçu ton message !",
+                'model': 'simple-response'
+            }), 200
+            
+    except Exception as e:
+        print(f"❌ Erreur Gemini: {str(e)}")
+        
+        MemoryService24h.add_message('assistant', f"BenBot: {user_message}")
+        
+        return jsonify({
+            'success': True,
+            'response': f"BenBot: {user_message}",
+            'model': 'fallback',
+            'timestamp': time.time()
+        }), 200
+
+# ============================================
+# ROUTES DE MÉMOIRE
+# ============================================
+
+@app.route('/api/memory/status', methods=['GET'])
+def memory_status():
+    """Statut de la mémoire 24h"""
+    if 'conversation' not in session:
+        return jsonify({
+            'success': True,
+            'memory': 'inactive',
+            'message': 'Aucune conversation active'
+        })
+    
+    summary = MemoryService24h.get_conversation_summary()
+    user_info = MemoryService24h.get_user_info()
+    topics = session.get('conversation', {}).get('topics', [])
     
     return jsonify({
-        'success': result['success'],
-        'response': result['response'],
-        'model': result.get('model', 'unknown'),
-        'error': result.get('error'),
-        'timestamp': time.time()
+        'success': True,
+        'memory': 'active',
+        'expiration': '24h',
+        'summary': summary,
+        'user_info': user_info,
+        'topics': topics,
+        'recent_messages': MemoryService24h.get_context(4)
     })
+
+@app.route('/api/memory/clear', methods=['POST'])
+def memory_clear():
+    """Efface la mémoire 24h"""
+    MemoryService24h.clear()
+    return jsonify({
+        'success': True,
+        'message': 'Mémoire effacée'
+    })
+
+@app.route('/api/memory/remember', methods=['POST'])
+def memory_remember():
+    """Mémorise une information personnalisée"""
+    data = request.json
+    key = data.get('key')
+    value = data.get('value')
+    
+    if key and value:
+        MemoryService24h.remember_info(key, value)
+        return jsonify({
+            'success': True,
+            'message': f"J'ai mémorisé: {key} = {value}"
+        })
+    
+    return jsonify({'error': 'Clé ou valeur manquante'}), 400
+
+@app.route('/api/memory/time-left', methods=['GET'])
+def memory_time_left():
+    """Temps restant sur la mémoire 24h"""
+    if 'conversation' not in session:
+        return jsonify({
+            'success': True,
+            'active': False,
+            'time_left': 0
+        })
+    
+    expires_at = session['conversation'].get('expires_at', 0)
+    time_left = max(0, int(expires_at - time.time()))
+    
+    hours = time_left // 3600
+    minutes = (time_left % 3600) // 60
+    seconds = time_left % 60
+    
+    return jsonify({
+        'success': True,
+        'active': True,
+        'time_left_seconds': time_left,
+        'time_left_formatted': f"{hours}h{minutes}min{seconds}s",
+        'expires_at': datetime.fromtimestamp(expires_at).strftime('%H:%M %d/%m/%Y')
+    })
+
+# ============================================
+# ROUTES GEMINI
+# ============================================
 
 @app.route('/api/gemini/models', methods=['GET'])
 def list_gemini_models():
@@ -448,7 +746,6 @@ def debug_gemini():
                 'methods': list(model.supported_generation_methods)
             }
             
-            # Tester le modèle s'il supporte generateContent
             if model_info['supports_generate']:
                 try:
                     test_model = genai.GenerativeModel(model.name)
@@ -510,8 +807,9 @@ def vpn_test():
         }), 500
 
 @app.route('/api/vpn/proxies', methods=['GET'])
+@app.route('/api/get-proxies', methods=['GET'])
 def get_proxies():
-    """Liste des proxies"""
+    """Liste des proxies - Supporte les deux URLs"""
     try:
         force_refresh = request.args.get('refresh', 'false').lower() == 'true'
         proxies = VPNService.get_free_vpn_proxies(force_refresh=force_refresh)
@@ -547,7 +845,8 @@ def system_status():
         'application': {
             'name': 'Chat App IA',
             'version': '1.0.0',
-            'environment': 'production' if not DEBUG_MODE else 'development'
+            'environment': 'production' if not DEBUG_MODE else 'development',
+            'memory': '24h active'
         },
         'apis': {
             'gemini': {
@@ -562,6 +861,10 @@ def system_status():
         'vpn': {
             'proxies_available': len(proxies),
             'cache_age': time.time() - VPNService._cache_timestamp if VPNService._cache_timestamp else 0
+        },
+        'memory': {
+            'active': 'conversation' in session,
+            'expiration': '24h'
         },
         'timestamp': time.time()
     })
