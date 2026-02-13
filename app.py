@@ -90,7 +90,7 @@ def chat():
         
         # Utiliser l'API OpenAI
         response = openai.ChatCompletion.create(
-            model="gpt-3.5-turbo",
+            model="gpt-4o-mini",
             messages=[
                 {"role": "system", "content": "Vous êtes Ben bot un assistant IA utile."},
                 {"role": "user", "content": user_message}
