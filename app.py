@@ -1,7 +1,7 @@
 # ============================================
 # APPLICATION FLASK - CHAT APP AVEC IA
 # Déploiement sur Vercel
-# Variables d'environnement depuis Vercel Dashboard
+# GEMINI - DÉTECTION AUTOMATIQUE DES MODÈLES
 # ============================================
 
 from flask import Flask, render_template, request, jsonify, session
@@ -25,13 +25,16 @@ if not SECRET_KEY:
     raise ValueError("❌ ERREUR CRITIQUE: SECRET_KEY non définie dans Vercel!")
 app.secret_key = SECRET_KEY
 
-# 🔥 API GEMINI (même variable pour compatibilité)
+# 🔥 API GEMINI - Utilise OPENAI_API_KEY ou GEMINI_API_KEY
 GEMINI_API_KEY = os.environ.get('OPENAI_API_KEY') or os.environ.get('GEMINI_API_KEY')
 if not GEMINI_API_KEY:
     print("⚠️ ATTENTION: Aucune clé API Gemini trouvée!")
 else:
-    genai.configure(api_key=GEMINI_API_KEY)
-    print("✅ Gemini configuré avec succès!")
+    try:
+        genai.configure(api_key=GEMINI_API_KEY)
+        print("✅ Gemini configuré avec succès!")
+    except Exception as e:
+        print(f"❌ Erreur configuration Gemini: {str(e)}")
 
 # Google AdSense
 ADSENSE_CLIENT_ID = os.environ.get('ADSENSE_CLIENT_ID', 'ca-pub-XXXXXXXXXXXXXXXX')
@@ -81,7 +84,7 @@ def handle_errors(f):
 # ============================================
 
 class VPNService:
-    """Service VPN avec proxies gratuits - CORRIGÉ"""
+    """Service VPN avec proxies gratuits"""
     
     _proxies_cache = None
     _cache_timestamp = 0
@@ -89,7 +92,7 @@ class VPNService:
     
     @classmethod
     def get_free_vpn_proxies(cls, force_refresh=False):
-        """Récupère une liste de proxies - VERSION STABLE"""
+        """Récupère une liste de proxies"""
         
         current_time = time.time()
         if (not force_refresh and 
@@ -97,7 +100,6 @@ class VPNService:
             current_time - cls._cache_timestamp < cls.CACHE_DURATION):
             return cls._proxies_cache
         
-        # 🔥 SOURCES PLUS FIABLES
         proxy_sources = [
             'https://api.proxyscrape.com/v2/?request=getproxies&protocol=http&timeout=5000&country=all&ssl=all&anonymity=all',
             'https://raw.githubusercontent.com/TheSpeedX/PROXY-List/master/http.txt',
@@ -109,14 +111,10 @@ class VPNService:
         
         for source in proxy_sources:
             try:
-                print(f"🌐 Chargement proxies depuis: {source[:50]}...")
                 response = requests.get(source, timeout=10)
-                
                 if response.status_code == 200:
-                    # Nettoyer le texte
                     text = response.text.strip()
                     
-                    # Différents formats
                     if '\r\n' in text:
                         proxies = text.split('\r\n')
                     elif '\n' in text:
@@ -124,27 +122,20 @@ class VPNService:
                     else:
                         proxies = text.split()
                     
-                    # Filtrer les proxies valides
                     for proxy in proxies:
                         proxy = proxy.strip()
                         if ':' in proxy and len(proxy.split(':')) == 2:
-                            # Vérifier que c'est une IP:port valide
                             parts = proxy.split(':')
                             if parts[0].count('.') == 3 and parts[1].isdigit():
                                 all_proxies.append(proxy)
-                    
-                    print(f"✅ {len(proxies)} proxies trouvés sur cette source")
-                    
+                                
             except Exception as e:
                 if DEBUG_MODE:
-                    print(f"⚠️ Source indisponible: {source[:30]}... - {str(e)[:50]}")
+                    print(f"⚠️ Source indisponible: {source[:30]}...")
                 continue
         
-        # Dédupliquer et limiter
-        cls._proxies_cache = list(set(all_proxies))[:50]  # Limité à 50 pour la stabilité
+        cls._proxies_cache = list(set(all_proxies))[:50]
         cls._cache_timestamp = current_time
-        
-        print(f"✅ TOTAL: {len(cls._proxies_cache)} proxies valides chargés")
         return cls._proxies_cache
     
     @classmethod
@@ -171,11 +162,9 @@ class VPNService:
         proxies = cls.get_free_vpn_proxies()
         random.shuffle(proxies)
         
-        for proxy in proxies[:10]:  # Tester les 10 premiers
+        for proxy in proxies[:10]:
             if cls.test_proxy(proxy):
-                print(f"✅ Proxy fonctionnel trouvé: {proxy}")
                 return proxy
-        
         return None
     
     @classmethod
@@ -203,7 +192,6 @@ class VPNService:
                             'method': 'VPN'
                         }
             
-            # Fallback sans VPN
             response = requests.get(
                 'https://api.ipify.org?format=json',
                 timeout=3
@@ -223,6 +211,149 @@ class VPNService:
             }
 
 # ============================================
+# SERVICE GEMINI - DÉTECTION AUTOMATIQUE
+# ============================================
+
+class GeminiService:
+    """Service Gemini avec détection automatique des modèles"""
+    
+    _available_models = None
+    _selected_model = None
+    _last_check = 0
+    CACHE_DURATION = 3600  # 1 heure
+    
+    @classmethod
+    def get_available_models(cls, force_refresh=False):
+        """Liste les modèles Gemini disponibles"""
+        
+        current_time = time.time()
+        if (not force_refresh and 
+            cls._available_models is not None and 
+            current_time - cls._last_check < cls.CACHE_DURATION):
+            return cls._available_models
+        
+        if not GEMINI_API_KEY:
+            return []
+        
+        try:
+            genai.configure(api_key=GEMINI_API_KEY)
+            models = []
+            
+            for model in genai.list_models():
+                if 'generateContent' in model.supported_generation_methods:
+                    models.append({
+                        'name': model.name,
+                        'display_name': model.display_name,
+                        'methods': list(model.supported_generation_methods)
+                    })
+                    print(f"📋 Modèle trouvé: {model.name}")
+            
+            cls._available_models = models
+            cls._last_check = current_time
+            return models
+            
+        except Exception as e:
+            print(f"❌ Erreur chargement modèles: {str(e)}")
+            return []
+    
+    @classmethod
+    def get_best_model(cls):
+        """Sélectionne le meilleur modèle disponible"""
+        
+        models = cls.get_available_models()
+        
+        if not models:
+            return None
+        
+        # Liste des modèles préférés par ordre de priorité
+        preferred_names = [
+            'models/gemini-1.5-pro',
+            'models/gemini-1.5-flash',
+            'models/gemini-1.0-pro',
+            'models/gemini-pro',
+            'gemini-1.5-pro',
+            'gemini-1.5-flash',
+            'gemini-1.0-pro',
+            'gemini-pro'
+        ]
+        
+        # Chercher d'abord les modèles préférés
+        for preferred in preferred_names:
+            for model in models:
+                if model['name'] == preferred:
+                    print(f"✅ Modèle sélectionné: {preferred}")
+                    return preferred
+        
+        # Sinon prendre le premier modèle disponible
+        if models:
+            print(f"⚠️ Modèle par défaut: {models[0]['name']}")
+            return models[0]['name']
+        
+        return None
+    
+    @classmethod
+    def generate_response(cls, user_message, max_tokens=500, temperature=0.7):
+        """Génère une réponse avec le meilleur modèle disponible"""
+        
+        if not GEMINI_API_KEY:
+            return {
+                'success': False,
+                'error': 'Clé API manquante',
+                'response': "Service IA non configuré."
+            }
+        
+        try:
+            genai.configure(api_key=GEMINI_API_KEY)
+            model_name = cls.get_best_model()
+            
+            if not model_name:
+                return {
+                    'success': False,
+                    'error': 'Aucun modèle disponible',
+                    'response': "Aucun modèle IA disponible."
+                }
+            
+            model = genai.GenerativeModel(model_name)
+            
+            # Prompt optimisé pour BenBot
+            prompt = f"""Tu es BenBot, un assistant IA amical et serviable.
+            Réponds en français de manière concise, claire et utile.
+            Message de l'utilisateur: {user_message}
+            Réponse de BenBot:"""
+            
+            response = model.generate_content(
+                prompt,
+                generation_config={
+                    "temperature": temperature,
+                    "max_output_tokens": max_tokens,
+                    "top_p": 0.9,
+                    "top_k": 40
+                }
+            )
+            
+            if response and response.text:
+                return {
+                    'success': True,
+                    'response': response.text,
+                    'model': model_name,
+                    'tokens_used': len(response.text) // 4
+                }
+            else:
+                return {
+                    'success': False,
+                    'error': 'Réponse vide',
+                    'response': "Désolé, je n'ai pas pu générer une réponse."
+                }
+                
+        except Exception as e:
+            print(f"❌ Erreur Gemini: {str(e)}")
+            return {
+                'success': False,
+                'error': str(e),
+                'response': f"BenBot: Bonjour ! Je suis en ligne. Votre message a bien été reçu."
+            }
+
+# ============================================
 # ROUTES PRINCIPALES
 # ============================================
 
@@ -236,15 +367,19 @@ def index():
 
 @app.route('/health')
 def health():
-    return jsonify({'status': 'healthy', 'timestamp': time.time()})
+    """Health check"""
+    return jsonify({
+        'status': 'healthy',
+        'timestamp': time.time()
+    })
 
 # ============================================
-# ROUTES GEMINI CORRIGÉES
+# ROUTES GEMINI - OPTION 2 (DÉTECTION AUTOMATIQUE)
 # ============================================
 
 @app.route('/api/chat', methods=['POST'])
 def chat():
-    """API Gemini - VERSION CORRIGÉE QUI MARCHE"""
+    """API Gemini avec détection automatique des modèles"""
     
     data = request.json
     if not data:
@@ -254,115 +389,111 @@ def chat():
     if not user_message:
         return jsonify({'error': 'Message vide'}), 400
     
-    # 🔥 VÉRIFIER LA CLÉ API
-    if not GEMINI_API_KEY:
-        return jsonify({
-            'success': True,
-            'response': "⚠️ Service IA non configuré. Veuillez ajouter une clé API Gemini.",
-            'model': 'not-configured',
-            'timestamp': time.time()
-        }), 200
+    # Paramètres optionnels
+    max_tokens = min(int(data.get('max_tokens', 500)), 1000)
+    temperature = float(data.get('temperature', 0.7))
     
-    try:
-        # 🔥 MODÈLE GEMINI-PRO - 100% DISPONIBLE
-        genai.configure(api_key=GEMINI_API_KEY)
-        model = genai.GenerativeModel('gemini-pro')
-        
-        # 🔥 PROMPT SIMPLE ET EFFICACE
-        prompt = f"Tu es BenBot, un assistant IA amical. Réponds en français de façon concise: {user_message}"
-        
-        response = model.generate_content(
-            prompt,
-            generation_config={
-                "temperature": 0.7,
-                "max_output_tokens": 500,
-                "top_p": 0.9,
-                "top_k": 40
-            }
-        )
-        
-        if response and response.text:
-            return jsonify({
-                'success': True,
-                'response': response.text,
-                'model': 'gemini-pro',
-                'timestamp': time.time()
-            })
-        else:
-            return jsonify({
-                'success': True,
-                'response': f"BenBot: J'ai bien reçu ton message. Comment puis-je t'aider ?",
-                'model': 'simple-response',
-                'timestamp': time.time()
-            }), 200
-            
-    except Exception as e:
-        print(f"❌ Erreur Gemini: {str(e)}")
-        
-        # 🔥 FALLBACK SIMPLE
-        return jsonify({
-            'success': True,
-            'response': f"BenBot: Bonjour ! Je suis actuellement en mode simple. Message reçu: '{user_message[:100]}'",
-            'model': 'fallback',
-            'timestamp': time.time()
-        }), 200
+    # Générer la réponse avec Gemini
+    result = GeminiService.generate_response(
+        user_message,
+        max_tokens=max_tokens,
+        temperature=temperature
+    )
+    
+    return jsonify({
+        'success': result['success'],
+        'response': result['response'],
+        'model': result.get('model', 'unknown'),
+        'error': result.get('error'),
+        'timestamp': time.time()
+    })
 
 @app.route('/api/gemini/models', methods=['GET'])
-def list_models():
-    """Liste les modèles Gemini disponibles"""
+def list_gemini_models():
+    """Liste tous les modèles Gemini disponibles"""
+    force_refresh = request.args.get('refresh', 'false').lower() == 'true'
+    models = GeminiService.get_available_models(force_refresh=force_refresh)
+    
+    return jsonify({
+        'success': True,
+        'count': len(models),
+        'models': models,
+        'selected': GeminiService.get_best_model(),
+        'timestamp': time.time()
+    })
+
+@app.route('/api/gemini/debug', methods=['GET'])
+def debug_gemini():
+    """Debug complet Gemini"""
+    result = {
+        'api_key_configured': bool(GEMINI_API_KEY),
+        'api_key_prefix': GEMINI_API_KEY[:8] + '...' if GEMINI_API_KEY else None,
+        'models': [],
+        'selected_model': GeminiService.get_best_model(),
+        'error': None
+    }
+    
     if not GEMINI_API_KEY:
-        return jsonify({'error': 'API key non configurée'}), 400
+        result['error'] = 'Clé API manquante'
+        return jsonify(result)
     
     try:
         genai.configure(api_key=GEMINI_API_KEY)
-        models = genai.list_models()
-        available = []
         
-        for model in models:
-            if 'generateContent' in model.supported_generation_methods:
-                available.append({
-                    'name': model.name,
-                    'display_name': model.display_name
-                })
+        for model in genai.list_models():
+            model_info = {
+                'name': model.name,
+                'display_name': model.display_name,
+                'supports_generate': 'generateContent' in model.supported_generation_methods,
+                'methods': list(model.supported_generation_methods)
+            }
+            
+            # Tester le modèle s'il supporte generateContent
+            if model_info['supports_generate']:
+                try:
+                    test_model = genai.GenerativeModel(model.name)
+                    test_response = test_model.generate_content(
+                        "Dis 'OK' en un mot",
+                        generation_config={"max_output_tokens": 10}
+                    )
+                    model_info['test'] = '✅ OK' if test_response.text else '⚠️ Vide'
+                except Exception as e:
+                    model_info['test'] = f'❌ {str(e)[:50]}'
+            
+            result['models'].append(model_info)
         
-        return jsonify({
-            'success': True,
-            'models': available,
-            'count': len(available)
-        })
+        result['count'] = len(result['models'])
+        
     except Exception as e:
-        return jsonify({'error': str(e)}), 500
+        result['error'] = str(e)
+    
+    return jsonify(result)
 
 # ============================================
-# ROUTES VPN CORRIGÉES
+# ROUTES VPN
 # ============================================
 
 @app.route('/api/vpn/test', methods=['GET'])
 def vpn_test():
-    """Test VPN - VERSION CORRIGÉE"""
+    """Test VPN"""
     try:
-        # Test avec VPN
         vpn_info = VPNService.get_ip_info(use_vpn=True)
-        
-        # Test sans VPN
         direct_info = VPNService.get_ip_info(use_vpn=False)
-        
-        # État des proxies
         proxies = VPNService.get_free_vpn_proxies()
         working_proxy = VPNService.get_working_proxy()
         
         return jsonify({
             'success': True,
             'vpn': {
-                'ip': vpn_info.get('ip') if vpn_info.get('success') else None,
+                'ip': vpn_info.get('ip'),
                 'proxy': vpn_info.get('proxy'),
                 'status': 'connected' if vpn_info.get('success') else 'failed',
-                'method': vpn_info.get('method', 'N/A')
+                'method': vpn_info.get('method')
             },
             'direct': {
                 'ip': direct_info.get('ip'),
                 'status': 'connected' if direct_info.get('success') else 'failed',
-                'method': direct_info.get('method', 'N/A')
+                'method': direct_info.get('method')
             },
             'proxies': {
                 'total': len(proxies),
@@ -372,23 +503,19 @@ def vpn_test():
         })
         
     except Exception as e:
-        print(f"❌ Erreur VPN test: {str(e)}")
         return jsonify({
             'success': False,
             'error': str(e),
-            'vpn': {'status': 'failed'},
-            'direct': {'status': 'failed'},
             'timestamp': time.time()
         }), 500
 
 @app.route('/api/vpn/proxies', methods=['GET'])
 def get_proxies():
-    """Liste des proxies disponibles"""
+    """Liste des proxies"""
     try:
         force_refresh = request.args.get('refresh', 'false').lower() == 'true'
         proxies = VPNService.get_free_vpn_proxies(force_refresh=force_refresh)
         
-        # Tester les 5 premiers
         working = []
         for proxy in proxies[:5]:
             if VPNService.test_proxy(proxy):
@@ -413,6 +540,7 @@ def get_proxies():
 @app.route('/api/system/status', methods=['GET'])
 def system_status():
     """Statut complet du système"""
+    models = GeminiService.get_available_models()
     proxies = VPNService.get_free_vpn_proxies()
     
     return jsonify({
@@ -424,7 +552,8 @@ def system_status():
         'apis': {
             'gemini': {
                 'configured': bool(GEMINI_API_KEY),
-                'model': 'gemini-pro'
+                'models_available': len(models),
+                'selected_model': GeminiService.get_best_model()
             },
             'adsense': {
                 'configured': ADSENSE_CLIENT_ID != 'ca-pub-XXXXXXXXXXXXXXXX'
@@ -447,7 +576,11 @@ def not_found(error):
 
 @app.errorhandler(500)
 def internal_error(error):
-    return jsonify({'error': 'Erreur interne'}), 500
+    return jsonify({'error': 'Erreur interne du serveur'}), 500
+
+@app.errorhandler(429)
+def rate_limit(error):
+    return jsonify({'error': 'Trop de requêtes'}), 429
 
 # ============================================
 # DÉMARRAGE
@@ -462,4 +595,5 @@ if __name__ == '__main__':
         threaded=True
     )
 
+# Pour Vercel
 application = app
