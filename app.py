@@ -3,7 +3,7 @@
 # Déploiement sur Vercel
 # GEMINI - DÉTECTION AUTOMATIQUE DES MODÈLES
 # MÉMOIRE 24H INTÉGRÉE
-# ROUTES VPN COMPLÈTES (/api/vpn-test ET /api/get-proxies)
+# VPN AVEC TEST AUTOMATIQUE MULTI-PROXIES
 # ============================================
 
 from flask import Flask, render_template, request, jsonify, session
@@ -94,91 +94,364 @@ def handle_errors(f):
     return decorated_function
 
 # ============================================
-# SERVICE VPN
+# SERVICE VPN AMÉLIORÉ - TEST AUTOMATIQUE MULTI-PROXIES
 # ============================================
 
 class VPNService:
-    """Service VPN avec proxies gratuits"""
+    """Service VPN avec test automatique de proxies mondiaux"""
     
-    _proxies_cache = None
+    _proxies_cache = []
+    _working_cache = []
     _cache_timestamp = 0
-    CACHE_DURATION = 1800  # 30 minutes
+    CACHE_DURATION = 600  # 10 minutes (rechargement fréquent)
+    
+    # Statistiques
+    _total_tested = 0
+    _total_working = 0
+    _last_test_duration = 0
+    _proxy_countries = {}
     
     @classmethod
-    def get_free_vpn_proxies(cls, force_refresh=False):
-        """Récupère une liste de proxies"""
-        
-        current_time = time.time()
-        if (not force_refresh and 
-            cls._proxies_cache is not None and 
-            current_time - cls._cache_timestamp < cls.CACHE_DURATION):
-            return cls._proxies_cache
-        
-        proxy_sources = [
-            'https://api.proxyscrape.com/v2/?request=getproxies&protocol=http&timeout=5000&country=all&ssl=all&anonymity=all',
-            'https://raw.githubusercontent.com/TheSpeedX/PROXY-List/master/http.txt',
-            'https://raw.githubusercontent.com/ShiftyTR/Proxy-List/master/http.txt',
-            'https://raw.githubusercontent.com/jetkai/proxy-list/main/online-proxies/txt/proxies-http.txt'
-        ]
-        
-        all_proxies = []
-        
-        for source in proxy_sources:
-            try:
-                response = requests.get(source, timeout=10)
-                if response.status_code == 200:
-                    text = response.text.strip()
+    def test_proxy(cls, proxy, timeout=3):
+        """Teste si un proxy est fonctionnel avec vérification multiple et retourne pays + latence"""
+        try:
+            proxies = {
+                'http': f'http://{proxy}',
+                'https': f'http://{proxy}'
+            }
+            
+            # ✅ TEST 1: Vérifier que l'IP est accessible
+            test_urls = [
+                'http://httpbin.org/ip',
+                'http://api.ipify.org',
+                'http://ip-api.com/json',
+                'http://ifconfig.me/ip',
+                'http://icanhazip.com'
+            ]
+            
+            for url in test_urls:
+                try:
+                    start_time = time.time()
+                    response = requests.get(
+                        url,
+                        proxies=proxies,
+                        timeout=timeout,
+                        headers={
+                            'User-Agent': 'Mozilla/5.0 (Windows NT 10.0; Win64; x64) AppleWebKit/537.36',
+                            'Accept': 'application/json',
+                            'Connection': 'keep-alive'
+                        },
+                        verify=False
+                    )
                     
+                    if response.status_code == 200:
+                        latency = int((time.time() - start_time) * 1000)
+                        
+                        # Récupérer le pays du proxy
+                        country = "Inconnu"
+                        try:
+                            ip = proxy.split(':')[0]
+                            ip_response = requests.get(
+                                f'http://ip-api.com/json/{ip}',
+                                timeout=2
+                            )
+                            if ip_response.status_code == 200:
+                                ip_data = ip_response.json()
+                                country = ip_data.get('country', 'Inconnu')
+                        except:
+                            pass
+                        
+                        return True, latency, country
+                        
+                except requests.exceptions.Timeout:
+                    continue
+                except requests.exceptions.ConnectionError:
+                    continue
+                except:
+                    continue
+                    
+            return False, 0, None
+            
+        except Exception as e:
+            return False, 0, None
+    
+    @classmethod
+    def get_proxies_from_source(cls, url, parser='default'):
+        """Récupère les proxies depuis différentes sources"""
+        proxies = []
+        try:
+            response = requests.get(url, timeout=15)
+            if response.status_code == 200:
+                text = response.text.strip()
+                
+                # Différents formats de parsing
+                if parser == 'scrape':
+                    # Format proxyscrape
                     if '\r\n' in text:
                         proxies = text.split('\r\n')
                     elif '\n' in text:
                         proxies = text.split('\n')
                     else:
                         proxies = text.split()
-                    
-                    for proxy in proxies:
-                        proxy = proxy.strip()
-                        if ':' in proxy and len(proxy.split(':')) == 2:
-                            parts = proxy.split(':')
-                            if parts[0].count('.') == 3 and parts[1].isdigit():
-                                all_proxies.append(proxy)
-                                
-            except Exception as e:
-                if DEBUG_MODE:
-                    print(f"⚠️ Source indisponible: {source[:30]}...")
-                continue
+                        
+                elif parser == 'github':
+                    # Format GitHub raw
+                    lines = text.split('\n')
+                    for line in lines:
+                        line = line.strip()
+                        if ':' in line and not line.startswith('#'):
+                            if ' ' in line:
+                                proxies.append(line.split()[0])
+                            else:
+                                proxies.append(line)
+                
+                elif parser == 'speedx':
+                    # Format SpeedX
+                    lines = text.split('\n')
+                    for line in lines:
+                        line = line.strip()
+                        if ':' in line and len(line.split(':')) == 2:
+                            proxies.append(line)
+                
+                else:
+                    # Format par défaut
+                    if '\r\n' in text:
+                        proxies = text.split('\r\n')
+                    elif '\n' in text:
+                        proxies = text.split('\n')
+                    else:
+                        proxies = text.split()
+                
+                # Nettoyer les proxies
+                cleaned = []
+                for proxy in proxies:
+                    proxy = proxy.strip()
+                    if ':' in proxy and len(proxy.split(':')) == 2:
+                        parts = proxy.split(':')
+                        if parts[0].count('.') == 3 and parts[1].isdigit():
+                            cleaned.append(proxy)
+                
+                return cleaned
+                
+        except Exception as e:
+            if DEBUG_MODE:
+                print(f"⚠️ Source indisponible: {url[:30]}...")
         
-        cls._proxies_cache = list(set(all_proxies))[:50]
+        return []
+    
+    @classmethod
+    def get_all_proxies(cls, force_refresh=False):
+        """Récupère des proxies depuis TOUTES les sources disponibles dans le monde"""
+        
+        current_time = time.time()
+        if (not force_refresh and 
+            cls._proxies_cache and 
+            current_time - cls._cache_timestamp < cls.CACHE_DURATION):
+            return cls._proxies_cache
+        
+        print("\n🌍 RECHERCHE DE PROXIES DANS LE MONDE ENTIER...")
+        print("=" * 50)
+        
+        # 🌍 SOURCES DE PROXIES PAR PAYS ET MONDIALES
+        proxy_sources = [
+            # 🌐 SOURCES MONDIALES (TOUS PAYS)
+            {'url': 'https://api.proxyscrape.com/v2/?request=getproxies&protocol=http&timeout=1000&country=all&ssl=all&anonymity=all', 'parser': 'scrape'},
+            {'url': 'https://raw.githubusercontent.com/TheSpeedX/PROXY-List/master/http.txt', 'parser': 'speedx'},
+            {'url': 'https://raw.githubusercontent.com/ShiftyTR/Proxy-List/master/http.txt', 'parser': 'speedx'},
+            {'url': 'https://raw.githubusercontent.com/jetkai/proxy-list/main/online-proxies/txt/proxies-http.txt', 'parser': 'github'},
+            {'url': 'https://raw.githubusercontent.com/mmpx12/proxy-list/master/http.txt', 'parser': 'github'},
+            {'url': 'https://raw.githubusercontent.com/roosterkid/openproxylist/main/HTTP_RAW.txt', 'parser': 'github'},
+            {'url': 'https://raw.githubusercontent.com/mertguvencli/http-proxy-list/main/proxy-list.txt', 'parser': 'github'},
+            {'url': 'https://raw.githubusercontent.com/sunny9577/proxy-scraper/master/proxies.txt', 'parser': 'github'},
+            {'url': 'https://raw.githubusercontent.com/opsxcq/proxy-list/master/list.txt', 'parser': 'github'},
+            {'url': 'https://raw.githubusercontent.com/proxy4parsers/proxy-list/main/http.txt', 'parser': 'github'},
+            
+            # 🇺🇸 USA
+            {'url': 'https://api.proxyscrape.com/v2/?request=getproxies&protocol=http&timeout=1000&country=us&ssl=all&anonymity=all', 'parser': 'scrape'},
+            
+            # 🇫🇷 FRANCE
+            {'url': 'https://api.proxyscrape.com/v2/?request=getproxies&protocol=http&timeout=1000&country=fr&ssl=all&anonymity=all', 'parser': 'scrape'},
+            
+            # 🇬🇧 UK
+            {'url': 'https://api.proxyscrape.com/v2/?request=getproxies&protocol=http&timeout=1000&country=gb&ssl=all&anonymity=all', 'parser': 'scrape'},
+            
+            # 🇩🇪 ALLEMAGNE
+            {'url': 'https://api.proxyscrape.com/v2/?request=getproxies&protocol=http&timeout=1000&country=de&ssl=all&anonymity=all', 'parser': 'scrape'},
+            
+            # 🇨🇦 CANADA
+            {'url': 'https://api.proxyscrape.com/v2/?request=getproxies&protocol=http&timeout=1000&country=ca&ssl=all&anonymity=all', 'parser': 'scrape'},
+            
+            # 🇯🇵 JAPON
+            {'url': 'https://api.proxyscrape.com/v2/?request=getproxies&protocol=http&timeout=1000&country=jp&ssl=all&anonymity=all', 'parser': 'scrape'},
+            
+            # 🇧🇷 BRÉSIL
+            {'url': 'https://api.proxyscrape.com/v2/?request=getproxies&protocol=http&timeout=1000&country=br&ssl=all&anonymity=all', 'parser': 'scrape'},
+            
+            # 🇮🇳 INDE
+            {'url': 'https://api.proxyscrape.com/v2/?request=getproxies&protocol=http&timeout=1000&country=in&ssl=all&anonymity=all', 'parser': 'scrape'},
+            
+            # 🇷🇺 RUSSIE
+            {'url': 'https://api.proxyscrape.com/v2/?request=getproxies&protocol=http&timeout=1000&country=ru&ssl=all&anonymity=all', 'parser': 'scrape'},
+            
+            # 🇨🇳 CHINE
+            {'url': 'https://api.proxyscrape.com/v2/?request=getproxies&protocol=http&timeout=1000&country=cn&ssl=all&anonymity=all', 'parser': 'scrape'},
+            
+            # 🇧🇪 BELGIQUE
+            {'url': 'https://api.proxyscrape.com/v2/?request=getproxies&protocol=http&timeout=1000&country=be&ssl=all&anonymity=all', 'parser': 'scrape'},
+            
+            # 🇨🇭 SUISSE
+            {'url': 'https://api.proxyscrape.com/v2/?request=getproxies&protocol=http&timeout=1000&country=ch&ssl=all&anonymity=all', 'parser': 'scrape'},
+            
+            # 🇪🇸 ESPAGNE
+            {'url': 'https://api.proxyscrape.com/v2/?request=getproxies&protocol=http&timeout=1000&country=es&ssl=all&anonymity=all', 'parser': 'scrape'},
+            
+            # 🇮🇹 ITALIE
+            {'url': 'https://api.proxyscrape.com/v2/?request=getproxies&protocol=http&timeout=1000&country=it&ssl=all&anonymity=all', 'parser': 'scrape'},
+            
+            # 🇳🇱 PAYS-BAS
+            {'url': 'https://api.proxyscrape.com/v2/?request=getproxies&protocol=http&timeout=1000&country=nl&ssl=all&anonymity=all', 'parser': 'scrape'},
+            
+            # 🇸🇪 SUÈDE
+            {'url': 'https://api.proxyscrape.com/v2/?request=getproxies&protocol=http&timeout=1000&country=se&ssl=all&anonymity=all', 'parser': 'scrape'},
+            
+            # 🇳🇴 NORVÈGE
+            {'url': 'https://api.proxyscrape.com/v2/?request=getproxies&protocol=http&timeout=1000&country=no&ssl=all&anonymity=all', 'parser': 'scrape'},
+            
+            # 🇫🇮 FINLANDE
+            {'url': 'https://api.proxyscrape.com/v2/?request=getproxies&protocol=http&timeout=1000&country=fi&ssl=all&anonymity=all', 'parser': 'scrape'},
+            
+            # 🇩🇰 DANEMARK
+            {'url': 'https://api.proxyscrape.com/v2/?request=getproxies&protocol=http&timeout=1000&country=dk&ssl=all&anonymity=all', 'parser': 'scrape'},
+            
+            # 🇦🇺 AUSTRALIE
+            {'url': 'https://api.proxyscrape.com/v2/?request=getproxies&protocol=http&timeout=1000&country=au&ssl=all&anonymity=all', 'parser': 'scrape'},
+            
+            # 🇳🇿 NOUVELLE-ZÉLANDE
+            {'url': 'https://api.proxyscrape.com/v2/?request=getproxies&protocol=http&timeout=1000&country=nz&ssl=all&anonymity=all', 'parser': 'scrape'},
+            
+            # 🇿🇦 AFRIQUE DU SUD
+            {'url': 'https://api.proxyscrape.com/v2/?request=getproxies&protocol=http&timeout=1000&country=za&ssl=all&anonymity=all', 'parser': 'scrape'},
+            
+            # 🇦🇪 ÉMIRATS ARABES UNIS
+            {'url': 'https://api.proxyscrape.com/v2/?request=getproxies&protocol=http&timeout=1000&country=ae&ssl=all&anonymity=all', 'parser': 'scrape'},
+            
+            # 🇮🇱 ISRAËL
+            {'url': 'https://api.proxyscrape.com/v2/?request=getproxies&protocol=http&timeout=1000&country=il&ssl=all&anonymity=all', 'parser': 'scrape'},
+            
+            # 🇹🇷 TURQUIE
+            {'url': 'https://api.proxyscrape.com/v2/?request=getproxies&protocol=http&timeout=1000&country=tr&ssl=all&anonymity=all', 'parser': 'scrape'},
+        ]
+        
+        all_proxies = []
+        
+        # Récupérer les proxies de toutes les sources
+        for source in proxy_sources:
+            proxies = cls.get_proxies_from_source(source['url'], source['parser'])
+            all_proxies.extend(proxies)
+            if DEBUG_MODE:
+                print(f"📦 {len(proxies)} proxies de {source['url'][:50]}...")
+        
+        # Dédupliquer
+        all_proxies = list(set(all_proxies))
+        print(f"\n📊 TOTAL BRUT: {len(all_proxies)} proxies uniques")
+        
+        cls._proxies_cache = all_proxies
         cls._cache_timestamp = current_time
-        return cls._proxies_cache
-    
-    @classmethod
-    def test_proxy(cls, proxy):
-        """Teste si un proxy est fonctionnel"""
-        try:
-            proxies = {
-                'http': f'http://{proxy}',
-                'https': f'http://{proxy}'
-            }
-            response = requests.get(
-                'http://httpbin.org/ip',
-                proxies=proxies,
-                timeout=3,
-                headers={'User-Agent': 'Mozilla/5.0'}
-            )
-            return response.status_code == 200
-        except:
-            return False
-    
-    @classmethod
-    def get_working_proxy(cls):
-        """Retourne un proxy qui fonctionne"""
-        proxies = cls.get_free_vpn_proxies()
-        random.shuffle(proxies)
         
-        for proxy in proxies[:10]:
-            if cls.test_proxy(proxy):
+        return all_proxies
+    
+    @classmethod
+    def find_working_proxies(cls, limit=50, max_tests=100):
+        """Trouve automatiquement les proxies qui fonctionnent dans le monde"""
+        
+        print("\n🔍 RECHERCHE DE PROXIES FONCTIONNELS...")
+        print("=" * 50)
+        
+        # Récupérer tous les proxies
+        all_proxies = cls.get_all_proxies(force_refresh=True)
+        
+        if not all_proxies:
+            print("❌ Aucun proxy trouvé!")
+            return []
+        
+        # Mélanger pour avoir un échantillon aléatoire
+        random.shuffle(all_proxies)
+        
+        # Limiter le nombre de tests pour la performance
+        to_test = all_proxies[:max_tests]
+        
+        working_proxies = []
+        start_time = time.time()
+        
+        print(f"🧪 Test de {len(to_test)} proxies...\n")
+        
+        for i, proxy in enumerate(to_test, 1):
+            print(f"  Test {i}/{len(to_test)}: {proxy}", end=" ")
+            
+            is_working, latency, country = cls.test_proxy(proxy, timeout=3)
+            cls._total_tested += 1
+            
+            if is_working:
+                working_proxies.append({
+                    'proxy': proxy,
+                    'latency': latency,
+                    'country': country or 'Inconnu'
+                })
+                cls._total_working += 1
+                cls._working_cache.append(proxy)
+                
+                # Compter par pays
+                if country:
+                    cls._proxy_countries[country] = cls._proxy_countries.get(country, 0) + 1
+                
+                print(f"✅ {latency}ms - {country}")
+            else:
+                print("❌")
+            
+            # Limiter le nombre de proxies fonctionnels trouvés
+            if len(working_proxies) >= limit:
+                print(f"\n✅ Limite de {limit} proxies fonctionnels atteinte!")
+                break
+        
+        cls._last_test_duration = time.time() - start_time
+        
+        # Trier par latence (les plus rapides d'abord)
+        working_proxies.sort(key=lambda x: x['latency'])
+        
+        print(f"\n✅ RECHERCHE TERMINÉE!")
+        print(f"   - Temps: {cls._last_test_duration:.1f} secondes")
+        print(f"   - Proxies testés: {cls._total_tested}")
+        print(f"   - Proxies fonctionnels: {cls._total_working}")
+        print(f"   - Taux de succès: {cls._total_working/cls._total_tested*100:.1f}%" if cls._total_tested > 0 else "   - Taux de succès: 0%")
+        
+        # Afficher la répartition par pays
+        if cls._proxy_countries:
+            print("\n🌍 RÉPARTITION PAR PAYS:")
+            for country, count in sorted(cls._proxy_countries.items(), key=lambda x: x[1], reverse=True)[:5]:
+                print(f"   - {country}: {count}")
+        
+        return working_proxies
+    
+    @classmethod
+    def get_working_proxy(cls, force_refresh=False):
+        """Retourne un proxy 100% fonctionnel (testé en temps réel)"""
+        
+        # Si on a des proxies en cache et pas de rafraîchissement forcé
+        if cls._working_cache and not force_refresh and len(cls._working_cache) > 0:
+            proxy = random.choice(cls._working_cache)
+            # Vérifier rapidement qu'il fonctionne encore
+            is_working, _, _ = cls.test_proxy(proxy, timeout=2)
+            if is_working:
                 return proxy
+        
+        # Sinon, lancer une recherche de nouveaux proxies
+        working = cls.find_working_proxies(limit=10, max_tests=50)
+        
+        if working:
+            # Mettre à jour le cache
+            cls._working_cache = [w['proxy'] for w in working]
+            return cls._working_cache[0]
+        
         return None
     
     @classmethod
@@ -206,6 +479,7 @@ class VPNService:
                             'method': 'VPN'
                         }
             
+            # Fallback direct
             response = requests.get(
                 'https://api.ipify.org?format=json',
                 timeout=3
@@ -223,6 +497,19 @@ class VPNService:
                 'error': str(e),
                 'method': 'Échec'
             }
+    
+    @classmethod
+    def get_stats(cls):
+        """Retourne les statistiques du service VPN"""
+        return {
+            'total_tested': cls._total_tested,
+            'total_working': cls._total_working,
+            'success_rate': f"{cls._total_working/cls._total_tested*100:.1f}%" if cls._total_tested > 0 else "0%",
+            'last_test_duration': f"{cls._last_test_duration:.1f}s",
+            'cache_size': len(cls._proxies_cache) if cls._proxies_cache else 0,
+            'working_cache': len(cls._working_cache),
+            'countries': cls._proxy_countries
+        }
 
 # ============================================
 # SERVICE DE MÉMOIRE 24H
@@ -626,18 +913,20 @@ BenBot:"""
         }), 200
 
 # ============================================
-# ROUTES VPN - VERSION COMPLÈTE AVEC TOUS LES ALIAS
+# ROUTES VPN - VERSION COMPLÈTE AVEC TEST AUTOMATIQUE
 # ============================================
 
 @app.route('/api/vpn/test', methods=['GET'])
-@app.route('/api/vpn-test', methods=['GET'])  # 🔥 AJOUTÉ POUR COMPATIBILITÉ FRONTEND
+@app.route('/api/vpn-test', methods=['GET'])
 def vpn_test():
-    """Test VPN - Supporte /api/vpn/test ET /api/vpn-test"""
+    """Test VPN avec recherche automatique de proxies fonctionnels"""
     try:
+        # Lancer une recherche de proxies fonctionnels
+        working_proxies = VPNService.find_working_proxies(limit=5, max_tests=30)
+        
         vpn_info = VPNService.get_ip_info(use_vpn=True)
         direct_info = VPNService.get_ip_info(use_vpn=False)
-        proxies = VPNService.get_free_vpn_proxies()
-        working_proxy = VPNService.get_working_proxy()
+        stats = VPNService.get_stats()
         
         return jsonify({
             'success': True,
@@ -653,9 +942,12 @@ def vpn_test():
                 'method': direct_info.get('method', 'N/A')
             },
             'proxies': {
-                'total': len(proxies),
-                'working': 1 if working_proxy else 0
+                'total': len(VPNService._proxies_cache) if VPNService._proxies_cache else 0,
+                'working': len(working_proxies),
+                'tested': stats['total_tested'],
+                'success_rate': stats['success_rate']
             },
+            'stats': stats,
             'timestamp': time.time()
         })
         
@@ -670,24 +962,28 @@ def vpn_test():
         }), 500
 
 @app.route('/api/vpn/proxies', methods=['GET'])
-@app.route('/api/get-proxies', methods=['GET'])  # 🔥 AJOUTÉ POUR COMPATIBILITÉ FRONTEND
+@app.route('/api/get-proxies', methods=['GET'])
 def get_proxies():
-    """Liste des proxies - Supporte /api/vpn/proxies ET /api/get-proxies"""
+    """Liste des proxies fonctionnels après test automatique"""
     try:
         force_refresh = request.args.get('refresh', 'false').lower() == 'true'
-        proxies = VPNService.get_free_vpn_proxies(force_refresh=force_refresh)
         
-        working = []
-        for proxy in proxies[:5]:
-            if VPNService.test_proxy(proxy):
-                working.append(proxy)
+        if force_refresh:
+            working = VPNService.find_working_proxies(limit=20, max_tests=50)
+        else:
+            # Utiliser le cache
+            if VPNService._working_cache:
+                working = [{'proxy': p, 'latency': 0, 'country': 'Inconnu'} for p in VPNService._working_cache[:20]]
+            else:
+                working = VPNService.find_working_proxies(limit=20, max_tests=50)
         
         return jsonify({
             'success': True,
-            'total': len(proxies),
-            'proxies': proxies[:20],
-            'working': working[:5],
-            'cached': not force_refresh and VPNService._proxies_cache is not None,
+            'total': len(working),
+            'proxies': [w['proxy'] for w in working[:20]],
+            'working': working[:10],
+            'stats': VPNService.get_stats(),
+            'cached': not force_refresh and VPNService._working_cache is not None,
             'timestamp': time.time()
         })
         
@@ -697,6 +993,36 @@ def get_proxies():
             'success': False, 
             'error': str(e)
         }), 500
+
+@app.route('/api/vpn/stats', methods=['GET'])
+def vpn_stats():
+    """Statistiques du service VPN"""
+    return jsonify({
+        'success': True,
+        'stats': VPNService.get_stats(),
+        'timestamp': time.time()
+    })
+
+@app.route('/api/vpn/scan', methods=['POST'])
+def vpn_scan():
+    """Lance un scan complet de proxies"""
+    try:
+        data = request.json or {}
+        limit = int(data.get('limit', 50))
+        max_tests = int(data.get('max_tests', 100))
+        
+        working = VPNService.find_working_proxies(limit=limit, max_tests=max_tests)
+        
+        return jsonify({
+            'success': True,
+            'working': working[:20],
+            'count': len(working),
+            'stats': VPNService.get_stats(),
+            'timestamp': time.time()
+        })
+        
+    except Exception as e:
+        return jsonify({'success': False, 'error': str(e)}), 500
 
 # ============================================
 # ROUTES DE MÉMOIRE
@@ -848,7 +1174,7 @@ def debug_gemini():
 def system_status():
     """Statut complet du système"""
     models = GeminiService.get_available_models()
-    proxies = VPNService.get_free_vpn_proxies()
+    vpn_stats = VPNService.get_stats()
     
     return jsonify({
         'application': {
@@ -868,8 +1194,7 @@ def system_status():
             }
         },
         'vpn': {
-            'proxies_available': len(proxies),
-            'cache_age': time.time() - VPNService._cache_timestamp if VPNService._cache_timestamp else 0
+            'stats': vpn_stats
         },
         'memory': {
             'active': 'conversation' in session,
