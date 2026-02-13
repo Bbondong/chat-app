@@ -3,6 +3,7 @@
 # Déploiement sur Vercel
 # GEMINI - DÉTECTION AUTOMATIQUE DES MODÈLES
 # MÉMOIRE 24H INTÉGRÉE
+# ROUTES VPN COMPLÈTES (/api/vpn-test ET /api/get-proxies)
 # ============================================
 
 from flask import Flask, render_template, request, jsonify, session
@@ -625,6 +626,79 @@ BenBot:"""
         }), 200
 
 # ============================================
+# ROUTES VPN - VERSION COMPLÈTE AVEC TOUS LES ALIAS
+# ============================================
+
+@app.route('/api/vpn/test', methods=['GET'])
+@app.route('/api/vpn-test', methods=['GET'])  # 🔥 AJOUTÉ POUR COMPATIBILITÉ FRONTEND
+def vpn_test():
+    """Test VPN - Supporte /api/vpn/test ET /api/vpn-test"""
+    try:
+        vpn_info = VPNService.get_ip_info(use_vpn=True)
+        direct_info = VPNService.get_ip_info(use_vpn=False)
+        proxies = VPNService.get_free_vpn_proxies()
+        working_proxy = VPNService.get_working_proxy()
+        
+        return jsonify({
+            'success': True,
+            'vpn': {
+                'ip': vpn_info.get('ip'),
+                'proxy': vpn_info.get('proxy'),
+                'status': 'connected' if vpn_info.get('success') else 'failed',
+                'method': vpn_info.get('method', 'N/A')
+            },
+            'direct': {
+                'ip': direct_info.get('ip'),
+                'status': 'connected' if direct_info.get('success') else 'failed',
+                'method': direct_info.get('method', 'N/A')
+            },
+            'proxies': {
+                'total': len(proxies),
+                'working': 1 if working_proxy else 0
+            },
+            'timestamp': time.time()
+        })
+        
+    except Exception as e:
+        print(f"❌ Erreur VPN test: {str(e)}")
+        return jsonify({
+            'success': False,
+            'error': str(e),
+            'vpn': {'status': 'failed'},
+            'direct': {'status': 'failed'},
+            'timestamp': time.time()
+        }), 500
+
+@app.route('/api/vpn/proxies', methods=['GET'])
+@app.route('/api/get-proxies', methods=['GET'])  # 🔥 AJOUTÉ POUR COMPATIBILITÉ FRONTEND
+def get_proxies():
+    """Liste des proxies - Supporte /api/vpn/proxies ET /api/get-proxies"""
+    try:
+        force_refresh = request.args.get('refresh', 'false').lower() == 'true'
+        proxies = VPNService.get_free_vpn_proxies(force_refresh=force_refresh)
+        
+        working = []
+        for proxy in proxies[:5]:
+            if VPNService.test_proxy(proxy):
+                working.append(proxy)
+        
+        return jsonify({
+            'success': True,
+            'total': len(proxies),
+            'proxies': proxies[:20],
+            'working': working[:5],
+            'cached': not force_refresh and VPNService._proxies_cache is not None,
+            'timestamp': time.time()
+        })
+        
+    except Exception as e:
+        print(f"❌ Erreur proxies: {str(e)}")
+        return jsonify({
+            'success': False, 
+            'error': str(e)
+        }), 500
+
+# ============================================
 # ROUTES DE MÉMOIRE
 # ============================================
 
@@ -765,71 +839,6 @@ def debug_gemini():
         result['error'] = str(e)
     
     return jsonify(result)
-
-# ============================================
-# ROUTES VPN
-# ============================================
-
-@app.route('/api/vpn/test', methods=['GET'])
-def vpn_test():
-    """Test VPN"""
-    try:
-        vpn_info = VPNService.get_ip_info(use_vpn=True)
-        direct_info = VPNService.get_ip_info(use_vpn=False)
-        proxies = VPNService.get_free_vpn_proxies()
-        working_proxy = VPNService.get_working_proxy()
-        
-        return jsonify({
-            'success': True,
-            'vpn': {
-                'ip': vpn_info.get('ip'),
-                'proxy': vpn_info.get('proxy'),
-                'status': 'connected' if vpn_info.get('success') else 'failed',
-                'method': vpn_info.get('method')
-            },
-            'direct': {
-                'ip': direct_info.get('ip'),
-                'status': 'connected' if direct_info.get('success') else 'failed',
-                'method': direct_info.get('method')
-            },
-            'proxies': {
-                'total': len(proxies),
-                'working': 1 if working_proxy else 0
-            },
-            'timestamp': time.time()
-        })
-        
-    except Exception as e:
-        return jsonify({
-            'success': False,
-            'error': str(e),
-            'timestamp': time.time()
-        }), 500
-
-@app.route('/api/vpn/proxies', methods=['GET'])
-@app.route('/api/get-proxies', methods=['GET'])
-def get_proxies():
-    """Liste des proxies - Supporte les deux URLs"""
-    try:
-        force_refresh = request.args.get('refresh', 'false').lower() == 'true'
-        proxies = VPNService.get_free_vpn_proxies(force_refresh=force_refresh)
-        
-        working = []
-        for proxy in proxies[:5]:
-            if VPNService.test_proxy(proxy):
-                working.append(proxy)
-        
-        return jsonify({
-            'success': True,
-            'total': len(proxies),
-            'proxies': proxies[:20],
-            'working': working[:5],
-            'cached': not force_refresh and VPNService._proxies_cache is not None,
-            'timestamp': time.time()
-        })
-        
-    except Exception as e:
-        return jsonify({'success': False, 'error': str(e)}), 500
 
 # ============================================
 # ROUTES SYSTÈME
