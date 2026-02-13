@@ -122,7 +122,7 @@ async function getProxies() {
         proxiesList.style.display = 'block';
         
         try {
-            const response = await fetch('/api/get-proxies');
+            const response = await fetch('/api/vpn/proxies');
             const data = await response.json();
             
             if (data.success) {
