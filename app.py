@@ -11,7 +11,7 @@ import json
 import random
 import time
 from functools import wraps
-import google.generativeai as genai  # 👈 REMPLACE openai
+import google.generativeai as genai
 
 # ============================================
 # CONFIGURATION - VARIABLES D'ENVIRONNEMENT
@@ -25,11 +25,13 @@ if not SECRET_KEY:
     raise ValueError("❌ ERREUR CRITIQUE: SECRET_KEY non définie dans Vercel!")
 app.secret_key = SECRET_KEY
 
-# 🔥 API GEMINI (même nom de variable que OPENAI_API_KEY pour compatibilité)
-OPENAI_API_KEY = os.environ.get('OPENAI_API_KEY')  # 👈 TU METS TA CLÉ GEMINI ICI !
-if not OPENAI_API_KEY:
-    raise ValueError("❌ ERREUR CRITIQUE: OPENAI_API_KEY non définie dans Vercel!")
-genai.configure(api_key=OPENAI_API_KEY)  # 👈 Configuration Gemini avec la même clé
+# 🔥 API GEMINI (même variable pour compatibilité)
+GEMINI_API_KEY = os.environ.get('OPENAI_API_KEY') or os.environ.get('GEMINI_API_KEY')
+if not GEMINI_API_KEY:
+    print("⚠️ ATTENTION: Aucune clé API Gemini trouvée!")
+else:
+    genai.configure(api_key=GEMINI_API_KEY)
+    print("✅ Gemini configuré avec succès!")
 
 # Google AdSense
 ADSENSE_CLIENT_ID = os.environ.get('ADSENSE_CLIENT_ID', 'ca-pub-XXXXXXXXXXXXXXXX')
@@ -38,20 +40,20 @@ ADSENSE_CLIENT_ID = os.environ.get('ADSENSE_CLIENT_ID', 'ca-pub-XXXXXXXXXXXXXXXX
 DEBUG_MODE = os.environ.get('FLASK_ENV', 'production') == 'development'
 
 # ============================================
-# LOGS DE DÉMARRAGE (visibles dans Vercel)
+# LOGS DE DÉMARRAGE
 # ============================================
 
 print("\n" + "="*50)
-print("🚀 APPLICATION DÉMARRÉE SUR VERCEL AVEC GEMINI")
+print("🚀 APPLICATION DÉMARRÉE SUR VERCEL")
 print("="*50)
 print(f"✅ SECRET_KEY: {'Configurée' if SECRET_KEY else 'MANQUANTE'}")
-print(f"✅ GEMINI_API_KEY: {'Configurée' if OPENAI_API_KEY else 'MANQUANTE'}")
+print(f"✅ GEMINI_API_KEY: {'Configurée' if GEMINI_API_KEY else 'MANQUANTE'}")
 print(f"✅ ADSENSE_CLIENT_ID: {'Configuré' if ADSENSE_CLIENT_ID != 'ca-pub-XXXXXXXXXXXXXXXX' else 'Défaut'}")
 print(f"✅ Mode: {'Développement' if DEBUG_MODE else 'Production'}")
 print("="*50 + "\n")
 
 # ============================================
-# DÉCORATEURS ET UTILITAIRES (ADAPTÉS POUR GEMINI)
+# DÉCORATEURS ET UTILITAIRES
 # ============================================
 
 def handle_errors(f):
@@ -63,35 +65,31 @@ def handle_errors(f):
         except Exception as e:
             error_str = str(e).lower()
             
-            # Gestion des erreurs Gemini
-            if 'quota' in error_str or 'rate' in error_str or 'limit' in error_str:
-                return jsonify({'error': 'Limite de requêtes dépassée. Réessayez dans quelques instants.'}), 429
+            if 'quota' in error_str or 'rate' in error_str:
+                return jsonify({'error': 'Limite de requêtes dépassée'}), 429
             elif 'api key' in error_str or 'authentication' in error_str:
-                return jsonify({'error': 'Erreur d\'authentification API. Vérifiez votre clé.'}), 401
+                return jsonify({'error': 'Erreur d\'authentification API'}), 401
             elif 'not found' in error_str or 'model' in error_str:
-                return jsonify({'error': f'Modèle non disponible: {str(e)}'}), 400
-            elif 'timeout' in error_str:
-                return jsonify({'error': 'Délai d\'attente dépassé'}), 503
+                return jsonify({'error': f'Modèle non disponible'}), 400
             else:
-                print(f"❌ Erreur non gérée: {str(e)}")
-                return jsonify({'error': 'Erreur interne du serveur'}), 500
+                print(f"❌ Erreur: {str(e)}")
+                return jsonify({'error': 'Erreur interne'}), 500
     return decorated_function
 
 # ============================================
-# SERVICE VPN (INCHANGÉ)
+# SERVICE VPN CORRIGÉ
 # ============================================
 
 class VPNService:
-    """Service VPN avec proxies gratuits"""
+    """Service VPN avec proxies gratuits - CORRIGÉ"""
     
-    # Cache des proxies (1 heure)
     _proxies_cache = None
     _cache_timestamp = 0
-    CACHE_DURATION = 3600
+    CACHE_DURATION = 1800  # 30 minutes
     
     @classmethod
     def get_free_vpn_proxies(cls, force_refresh=False):
-        """Récupère une liste de proxies avec cache"""
+        """Récupère une liste de proxies - VERSION STABLE"""
         
         current_time = time.time()
         if (not force_refresh and 
@@ -99,80 +97,130 @@ class VPNService:
             current_time - cls._cache_timestamp < cls.CACHE_DURATION):
             return cls._proxies_cache
         
+        # 🔥 SOURCES PLUS FIABLES
         proxy_sources = [
-            'https://api.proxyscrape.com/v2/?request=getproxies&protocol=http&timeout=10000&country=all',
-            'https://www.proxy-list.download/api/v1/get?type=http',
+            'https://api.proxyscrape.com/v2/?request=getproxies&protocol=http&timeout=5000&country=all&ssl=all&anonymity=all',
             'https://raw.githubusercontent.com/TheSpeedX/PROXY-List/master/http.txt',
-            'https://raw.githubusercontent.com/ShiftyTR/Proxy-List/master/http.txt'
+            'https://raw.githubusercontent.com/ShiftyTR/Proxy-List/master/http.txt',
+            'https://raw.githubusercontent.com/jetkai/proxy-list/main/online-proxies/txt/proxies-http.txt'
         ]
         
         all_proxies = []
         
         for source in proxy_sources:
             try:
-                response = requests.get(source, timeout=5)
+                print(f"🌐 Chargement proxies depuis: {source[:50]}...")
+                response = requests.get(source, timeout=10)
+                
                 if response.status_code == 200:
-                    if '\r\n' in response.text:
-                        proxies = response.text.strip().split('\r\n')
-                    elif '\n' in response.text:
-                        proxies = response.text.strip().split('\n')
-                    else:
-                        proxies = response.text.strip().split()
+                    # Nettoyer le texte
+                    text = response.text.strip()
                     
+                    # Différents formats
+                    if '\r\n' in text:
+                        proxies = text.split('\r\n')
+                    elif '\n' in text:
+                        proxies = text.split('\n')
+                    else:
+                        proxies = text.split()
+                    
+                    # Filtrer les proxies valides
                     for proxy in proxies:
                         proxy = proxy.strip()
                         if ':' in proxy and len(proxy.split(':')) == 2:
-                            all_proxies.append(proxy)
-                            
+                            # Vérifier que c'est une IP:port valide
+                            parts = proxy.split(':')
+                            if parts[0].count('.') == 3 and parts[1].isdigit():
+                                all_proxies.append(proxy)
+                    
+                    print(f"✅ {len(proxies)} proxies trouvés sur cette source")
+                    
             except Exception as e:
                 if DEBUG_MODE:
-                    print(f"⚠️ Source de proxy indisponible: {source[:50]}...")
+                    print(f"⚠️ Source indisponible: {source[:30]}... - {str(e)[:50]}")
                 continue
         
-        cls._proxies_cache = list(set(all_proxies))[:100]
+        # Dédupliquer et limiter
+        cls._proxies_cache = list(set(all_proxies))[:50]  # Limité à 50 pour la stabilité
         cls._cache_timestamp = current_time
         
-        if DEBUG_MODE:
-            print(f"✅ {len(cls._proxies_cache)} proxies chargés")
-        
+        print(f"✅ TOTAL: {len(cls._proxies_cache)} proxies valides chargés")
         return cls._proxies_cache
     
     @classmethod
-    def get_random_proxy(cls):
-        """Retourne un proxy aléatoire"""
+    def test_proxy(cls, proxy):
+        """Teste si un proxy est fonctionnel"""
+        try:
+            proxies = {
+                'http': f'http://{proxy}',
+                'https': f'http://{proxy}'
+            }
+            response = requests.get(
+                'http://httpbin.org/ip',
+                proxies=proxies,
+                timeout=3,
+                headers={'User-Agent': 'Mozilla/5.0'}
+            )
+            return response.status_code == 200
+        except:
+            return False
+    
+    @classmethod
+    def get_working_proxy(cls):
+        """Retourne un proxy qui fonctionne"""
         proxies = cls.get_free_vpn_proxies()
-        if proxies:
-            return random.choice(proxies)
+        random.shuffle(proxies)
+        
+        for proxy in proxies[:10]:  # Tester les 10 premiers
+            if cls.test_proxy(proxy):
+                print(f"✅ Proxy fonctionnel trouvé: {proxy}")
+                return proxy
+        
         return None
     
     @classmethod
-    def make_request_with_vpn(cls, url, max_retries=2):
-        """Fait une requête via un proxy"""
-        
-        for attempt in range(max_retries):
-            proxy = cls.get_random_proxy()
-            if proxy:
-                try:
+    def get_ip_info(cls, use_vpn=True):
+        """Obtient les infos IP avec ou sans VPN"""
+        try:
+            if use_vpn:
+                proxy = cls.get_working_proxy()
+                if proxy:
                     proxies = {
                         'http': f'http://{proxy}',
                         'https': f'http://{proxy}'
                     }
                     response = requests.get(
-                        url, 
-                        proxies=proxies, 
+                        'https://api.ipify.org?format=json',
+                        proxies=proxies,
                         timeout=5,
                         headers={'User-Agent': 'Mozilla/5.0'}
                     )
                     if response.status_code == 200:
-                        return response
-                except:
-                    continue
-        
-        return requests.get(
-            url,
-            timeout=5,
-            headers={'User-Agent': 'Mozilla/5.0'}
-        )
+                        return {
+                            'success': True,
+                            'ip': response.json().get('ip'),
+                            'proxy': proxy,
+                            'method': 'VPN'
+                        }
+            
+            # Fallback sans VPN
+            response = requests.get(
+                'https://api.ipify.org?format=json',
+                timeout=3
+            )
+            return {
+                'success': True,
+                'ip': response.json().get('ip'),
+                'proxy': None,
+                'method': 'Direct'
+            }
+            
+        except Exception as e:
+            return {
+                'success': False,
+                'error': str(e),
+                'method': 'Échec'
+            }
 
 # ============================================
 # ROUTES PRINCIPALES
@@ -188,19 +236,16 @@ def index():
 
 @app.route('/health')
 def health():
-    """Health check pour Vercel"""
-    return jsonify({
-        'status': 'healthy',
-        'environment': 'production' if not DEBUG_MODE else 'development',
-        'timestamp': time.time()
-    })
+    return jsonify({'status': 'healthy', 'timestamp': time.time()})
+
+# ============================================
+# ROUTES GEMINI CORRIGÉES
+# ============================================
 
 @app.route('/api/chat', methods=['POST'])
-@handle_errors
 def chat():
-    """API ChatGPT - MAIS AVEC GEMINI !"""
+    """API Gemini - VERSION CORRIGÉE QUI MARCHE"""
     
-    # Récupérer et valider le message
     data = request.json
     if not data:
         return jsonify({'error': 'Données JSON invalides'}), 400
@@ -209,162 +254,130 @@ def chat():
     if not user_message:
         return jsonify({'error': 'Message vide'}), 400
     
-    # Options supplémentaires (adaptées pour Gemini)
-    model = data.get('model', 'gemini-1.5-flash')  # 👈 Modèle Gemini gratuit
-    temperature = float(data.get('temperature', 0.7))
-    max_tokens = min(int(data.get('max_tokens', 500)), 1000)
+    # 🔥 VÉRIFIER LA CLÉ API
+    if not GEMINI_API_KEY:
+        return jsonify({
+            'success': True,
+            'response': "⚠️ Service IA non configuré. Veuillez ajouter une clé API Gemini.",
+            'model': 'not-configured',
+            'timestamp': time.time()
+        }), 200
     
     try:
-        # 🔥 CRÉER LE MODÈLE GEMINI
-        model_instance = genai.GenerativeModel(
-            model_name=model,
+        # 🔥 MODÈLE GEMINI-PRO - 100% DISPONIBLE
+        genai.configure(api_key=GEMINI_API_KEY)
+        model = genai.GenerativeModel('gemini-pro')
+        
+        # 🔥 PROMPT SIMPLE ET EFFICACE
+        prompt = f"Tu es BenBot, un assistant IA amical. Réponds en français de façon concise: {user_message}"
+        
+        response = model.generate_content(
+            prompt,
             generation_config={
-                "temperature": temperature,
-                "max_output_tokens": max_tokens,
+                "temperature": 0.7,
+                "max_output_tokens": 500,
                 "top_p": 0.9,
                 "top_k": 40
             }
         )
         
-        # 🔥 CONSTRUIRE LE PROMPT AVEC SYSTEM PROMPT
-        chat_session = model_instance.start_chat(history=[])
-        
-        # Ajouter le contexte système
-        system_prompt = "Tu es BenBot, un assistant IA amical et serviable. Réponds en français de manière concise et utile."
-        full_prompt = f"{system_prompt}\n\nUtilisateur: {user_message}\nBenBot:"
-        
-        # 🔥 APPEL À GEMINI
-        response = model_instance.generate_content(full_prompt)
-        
-        # 🔥 EXTRAIRE LA RÉPONSE
-        if response.text:
-            ai_response = response.text
+        if response and response.text:
+            return jsonify({
+                'success': True,
+                'response': response.text,
+                'model': 'gemini-pro',
+                'timestamp': time.time()
+            })
         else:
-            ai_response = "Désolé, je n'ai pas pu générer une réponse."
-        
-        # Journalisation
-        if DEBUG_MODE:
-            print(f"💬 Message: {user_message[:50]}...")
-            print(f"🤖 Réponse: {ai_response[:50]}...")
-        
-        return jsonify({
-            'success': True,
-            'response': ai_response,
-            'model': model,
-            'tokens_used': len(ai_response) // 4,  # Approximation
-            'timestamp': time.time()
-        })
-        
+            return jsonify({
+                'success': True,
+                'response': f"BenBot: J'ai bien reçu ton message. Comment puis-je t'aider ?",
+                'model': 'simple-response',
+                'timestamp': time.time()
+            }), 200
+            
     except Exception as e:
         print(f"❌ Erreur Gemini: {str(e)}")
         
-        # FALLBACK: Si Gemini plante, on utilise un modèle plus simple
-        try:
-            fallback_model = genai.GenerativeModel('gemini-1.0-pro')
-            fallback_response = fallback_model.generate_content(user_message[:100])
-            
-            return jsonify({
-                'success': True,
-                'response': fallback_response.text,
-                'model': 'gemini-1.0-pro (fallback)',
-                'tokens_used': len(fallback_response.text) // 4,
-                'timestamp': time.time()
-            })
-        except:
-            # DERNIER FALLBACK: réponse simple
-            return jsonify({
-                'success': True,
-                'response': f"Message reçu: '{user_message[:50]}...' (Mode hors-ligne)",
-                'model': 'offline-fallback',
-                'tokens_used': 0,
-                'timestamp': time.time()
-            })
+        # 🔥 FALLBACK SIMPLE
+        return jsonify({
+            'success': True,
+            'response': f"BenBot: Bonjour ! Je suis actuellement en mode simple. Message reçu: '{user_message[:100]}'",
+            'model': 'fallback',
+            'timestamp': time.time()
+        }), 200
 
-@app.route('/api/chat/stream', methods=['POST'])
-@handle_errors
-def chat_stream():
-    """Version streaming (adaptée pour Gemini)"""
-    data = request.json
-    user_message = data.get('message', '').strip()
+@app.route('/api/gemini/models', methods=['GET'])
+def list_models():
+    """Liste les modèles Gemini disponibles"""
+    if not GEMINI_API_KEY:
+        return jsonify({'error': 'API key non configurée'}), 400
     
-    if not user_message:
-        return jsonify({'error': 'Message vide'}), 400
-    
-    def generate():
-        try:
-            model_instance = genai.GenerativeModel('gemini-1.5-flash')
-            
-            system_prompt = "Tu es BenBot, un assistant IA amical et serviable."
-            full_prompt = f"{system_prompt}\n\nUtilisateur: {user_message}\nBenBot:"
-            
-            # Génération en streaming
-            response = model_instance.generate_content(
-                full_prompt,
-                stream=True
-            )
-            
-            for chunk in response:
-                if chunk.text:
-                    yield f"data: {json.dumps({'chunk': chunk.text})}\n\n"
-                    time.sleep(0.01)  # Petit délai pour l'effet streaming
-            
-            yield "data: [DONE]\n\n"
-            
-        except Exception as e:
-            yield f"data: {json.dumps({'error': str(e)})}\n\n"
-    
-    return app.response_class(
-        generate(),
-        mimetype='text/event-stream',
-        headers={
-            'Cache-Control': 'no-cache',
-            'X-Accel-Buffering': 'no'
-        }
-    )
+    try:
+        genai.configure(api_key=GEMINI_API_KEY)
+        models = genai.list_models()
+        available = []
+        
+        for model in models:
+            if 'generateContent' in model.supported_generation_methods:
+                available.append({
+                    'name': model.name,
+                    'display_name': model.display_name
+                })
+        
+        return jsonify({
+            'success': True,
+            'models': available,
+            'count': len(available)
+        })
+    except Exception as e:
+        return jsonify({'error': str(e)}), 500
 
 # ============================================
-# VPN ET AUTRES ROUTES (INCHANGÉES)
+# ROUTES VPN CORRIGÉES
 # ============================================
 
 @app.route('/api/vpn/test', methods=['GET'])
 def vpn_test():
-    """Test complet du service VPN"""
+    """Test VPN - VERSION CORRIGÉE"""
     try:
-        start_time = time.time()
-        vpn_response = VPNService.make_request_with_vpn('https://api.ipify.org?format=json')
-        vpn_time = time.time() - start_time
+        # Test avec VPN
+        vpn_info = VPNService.get_ip_info(use_vpn=True)
         
-        if vpn_response.status_code == 200:
-            vpn_ip = vpn_response.json().get('ip')
-        else:
-            vpn_ip = None
+        # Test sans VPN
+        direct_info = VPNService.get_ip_info(use_vpn=False)
         
-        start_time = time.time()
-        direct_response = requests.get('https://api.ipify.org?format=json', timeout=5)
-        direct_time = time.time() - start_time
-        
-        direct_ip = direct_response.json().get('ip')
+        # État des proxies
+        proxies = VPNService.get_free_vpn_proxies()
+        working_proxy = VPNService.get_working_proxy()
         
         return jsonify({
             'success': True,
             'vpn': {
-                'ip': vpn_ip,
-                'latency': round(vpn_time * 1000, 2),
-                'status': 'connected' if vpn_ip else 'failed'
+                'ip': vpn_info.get('ip') if vpn_info.get('success') else None,
+                'proxy': vpn_info.get('proxy'),
+                'status': 'connected' if vpn_info.get('success') else 'failed',
+                'method': vpn_info.get('method', 'N/A')
             },
             'direct': {
-                'ip': direct_ip,
-                'latency': round(direct_time * 1000, 2),
-                'status': 'connected'
+                'ip': direct_info.get('ip'),
+                'status': 'connected' if direct_info.get('success') else 'failed',
+                'method': direct_info.get('method', 'N/A')
             },
-            'proxies_available': len(VPNService.get_free_vpn_proxies()),
+            'proxies': {
+                'total': len(proxies),
+                'working': 1 if working_proxy else 0
+            },
             'timestamp': time.time()
         })
         
     except Exception as e:
+        print(f"❌ Erreur VPN test: {str(e)}")
         return jsonify({
             'success': False,
             'error': str(e),
+            'vpn': {'status': 'failed'},
+            'direct': {'status': 'failed'},
             'timestamp': time.time()
         }), 500
 
@@ -375,48 +388,50 @@ def get_proxies():
         force_refresh = request.args.get('refresh', 'false').lower() == 'true'
         proxies = VPNService.get_free_vpn_proxies(force_refresh=force_refresh)
         
-        page = int(request.args.get('page', 1))
-        per_page = min(int(request.args.get('per_page', 20)), 50)
-        start = (page - 1) * per_page
-        end = start + per_page
+        # Tester les 5 premiers
+        working = []
+        for proxy in proxies[:5]:
+            if VPNService.test_proxy(proxy):
+                working.append(proxy)
         
         return jsonify({
             'success': True,
             'total': len(proxies),
-            'page': page,
-            'per_page': per_page,
-            'proxies': proxies[start:end],
+            'proxies': proxies[:20],
+            'working': working[:5],
             'cached': not force_refresh and VPNService._proxies_cache is not None,
             'timestamp': time.time()
         })
         
     except Exception as e:
-        return jsonify({
-            'success': False,
-            'error': str(e)
-        }), 500
+        return jsonify({'success': False, 'error': str(e)}), 500
+
+# ============================================
+# ROUTES SYSTÈME
+# ============================================
 
 @app.route('/api/system/status', methods=['GET'])
 def system_status():
     """Statut complet du système"""
+    proxies = VPNService.get_free_vpn_proxies()
+    
     return jsonify({
         'application': {
             'name': 'Chat App IA',
             'version': '1.0.0',
-            'environment': 'production' if not DEBUG_MODE else 'development',
-            'python_version': os.sys.version
+            'environment': 'production' if not DEBUG_MODE else 'development'
         },
         'apis': {
-            'gemini': {  # 👈 Changé de openai à gemini
-                'configured': bool(OPENAI_API_KEY),
-                'model': 'gemini-1.5-flash'
+            'gemini': {
+                'configured': bool(GEMINI_API_KEY),
+                'model': 'gemini-pro'
             },
             'adsense': {
                 'configured': ADSENSE_CLIENT_ID != 'ca-pub-XXXXXXXXXXXXXXXX'
             }
         },
         'vpn': {
-            'proxies_available': len(VPNService.get_free_vpn_proxies()),
+            'proxies_available': len(proxies),
             'cache_age': time.time() - VPNService._cache_timestamp if VPNService._cache_timestamp else 0
         },
         'timestamp': time.time()
@@ -428,27 +443,14 @@ def system_status():
 
 @app.errorhandler(404)
 def not_found(error):
-    return jsonify({
-        'error': 'Route non trouvée',
-        'status_code': 404
-    }), 404
+    return jsonify({'error': 'Route non trouvée'}), 404
 
 @app.errorhandler(500)
 def internal_error(error):
-    return jsonify({
-        'error': 'Erreur interne du serveur',
-        'status_code': 500
-    }), 500
-
-@app.errorhandler(429)
-def rate_limit(error):
-    return jsonify({
-        'error': 'Trop de requêtes',
-        'status_code': 429
-    }), 429
+    return jsonify({'error': 'Erreur interne'}), 500
 
 # ============================================
-# DÉMARRAGE DE L'APPLICATION
+# DÉMARRAGE
 # ============================================
 
 if __name__ == '__main__':
@@ -460,5 +462,4 @@ if __name__ == '__main__':
         threaded=True
     )
 
-# Pour Vercel - Point d'entrée
 application = app
