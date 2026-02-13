@@ -1,0 +1,121 @@
+<!DOCTYPE html>
+<html lang="fr">
+<head>
+    <meta charset="UTF-8">
+    <meta name="viewport" content="width=device-width, initial-scale=1.0">
+    <title>Application IA avec VPN</title>
+    <!-- Google AdSense -->
+    <script async src="https://pagead2.googlesyndication.com/pagead/js/adsbygoogle.js?client={{ adsense_client_id }}"
+     crossorigin="anonymous"></script>
+    <link rel="stylesheet" href="{{ url_for('static', filename='css/style.css') }}">
+    <link rel="stylesheet" href="https://cdnjs.cloudflare.com/ajax/libs/font-awesome/6.4.0/css/all.min.css">
+</head>
+<body>
+    <div class="container">
+        <header>
+            <h1><i class="fas fa-robot"></i> Application IA Avancée</h1>
+            <p>ChatGPT intégré + Service VPN gratuit + Publicités Google AdSense</p>
+        </header>
+
+        <!-- Section Google AdSense -->
+        <div class="adsense-section">
+            <ins class="adsbygoogle"
+                 style="display:block"
+                 data-ad-client="{{ adsense_client_id }}"
+                 data-ad-slot="1234567890"
+                 data-ad-format="auto"
+                 data-full-width-responsive="true"></ins>
+            <script>
+                 (adsbygoogle = window.adsbygoogle || []).push({});
+            </script>
+        </div>
+
+        <div class="main-content">
+            <!-- Section ChatGPT -->
+            <div class="section">
+                <h2><i class="fas fa-comments"></i> ChatGPT</h2>
+                <div class="chat-container">
+                    <div id="chat-messages" class="chat-messages">
+                        <div class="message bot">
+                            <strong>IA:</strong> Bonjour ! Je suis votre assistant IA. Comment puis-je vous aider aujourd'hui ?
+                        </div>
+                    </div>
+                    <div class="chat-input">
+                        <textarea id="user-input" placeholder="Posez votre question ici..." rows="3"></textarea>
+                        <button id="send-btn" onclick="sendMessage()">
+                            <i class="fas fa-paper-plane"></i> Envoyer
+                        </button>
+                    </div>
+                </div>
+            </div>
+
+            <!-- Section VPN -->
+            <div class="section">
+                <h2><i class="fas fa-shield-alt"></i> Service VPN</h2>
+                <div class="vpn-controls">
+                    <div class="vpn-info">
+                        <p><strong>Votre IP actuelle:</strong> <span id="current-ip">Chargement...</span></p>
+                        <p><strong>Statut VPN:</strong> <span id="vpn-status" class="status-offline">Non connecté</span></p>
+                    </div>
+                    
+                    <div class="vpn-buttons">
+                        <button onclick="testVPN()" class="btn-test">
+                            <i class="fas fa-sync-alt"></i> Tester avec VPN
+                        </button>
+                        <button onclick="getProxies()" class="btn-proxies">
+                            <i class="fas fa-list"></i> Voir les proxies disponibles
+                        </button>
+                    </div>
+                    
+                    <div id="proxies-list" class="proxies-list" style="display: none;">
+                        <h3>Proxies disponibles:</h3>
+                        <div id="proxies-content"></div>
+                    </div>
+                </div>
+            </div>
+
+            <!-- Section Informations -->
+            <div class="section info-section">
+                <h2><i class="fas fa-info-circle"></i> Informations</h2>
+                <div class="info-content">
+                    <div class="info-card">
+                        <i class="fas fa-brain"></i>
+                        <h3>ChatGPT</h3>
+                        <p>Posez n'importe quelle question à notre IA. Utilise l'API OpenAI pour des réponses intelligentes.</p>
+                    </div>
+                    <div class="info-card">
+                        <i class="fas fa-user-secret"></i>
+                        <h3>VPN Gratuit</h3>
+                        <p>Changez votre adresse IP apparente avec notre service VPN utilisant des proxies gratuits.</p>
+                    </div>
+                    <div class="info-card">
+                        <i class="fas fa-ad"></i>
+                        <h3>Google AdSense</h3>
+                        <p>Publicités contextuelles pour supporter le développement de l'application.</p>
+                    </div>
+                </div>
+            </div>
+        </div>
+
+        <!-- Publicité en bas -->
+        <div class="adsense-bottom">
+            <ins class="adsbygoogle"
+                 style="display:block"
+                 data-ad-client="{{ adsense_client_id }}"
+                 data-ad-slot="0987654321"
+                 data-ad-format="horizontal"
+                 data-full-width-responsive="true"></ins>
+            <script>
+                 (adsbygoogle = window.adsbygoogle || []).push({});
+            </script>
+        </div>
+
+        <footer>
+            <p>From ben-tech</p>
+            <p>© 2026 - Tous droits réservés</p>
+        </footer>
+    </div>
+
+    <script src="{{ url_for('static', filename='js/script.js') }}"></script>
+</body>
+</html>
